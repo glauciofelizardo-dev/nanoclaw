@@ -211,11 +211,17 @@ export class TelegramChannel implements Channel {
     this.bot.on('message:voice', async (ctx) => {
       const token = readEnvFile(['TELEGRAM_BOT_TOKEN']).TELEGRAM_BOT_TOKEN;
       const fileId = ctx.message.voice?.file_id;
-      if (!fileId || !token) { storeNonText(ctx, '[Voice message]'); return; }
+      if (!fileId || !token) {
+        storeNonText(ctx, '[Voice message]');
+        return;
+      }
       try {
         const fileInfo = await ctx.api.getFile(fileId);
         const filePath = fileInfo.file_path;
-        if (!filePath) { storeNonText(ctx, '[Voice message]'); return; }
+        if (!filePath) {
+          storeNonText(ctx, '[Voice message]');
+          return;
+        }
         const tmpDir = os.tmpdir();
         const oggPath = path.join(tmpDir, `voice_${Date.now()}.ogg`);
         const wavPath = oggPath.replace('.ogg', '.wav');
@@ -223,18 +229,52 @@ export class TelegramChannel implements Channel {
         await new Promise<void>((resolve, reject) => {
           const url = `https://api.telegram.org/file/bot${token}/${filePath}`;
           const out = fs.createWriteStream(oggPath);
-          https.get(url, (res) => { res.pipe(out); out.on('finish', resolve); }).on('error', reject);
+          https
+            .get(url, (res) => {
+              res.pipe(out);
+              out.on('finish', resolve);
+            })
+            .on('error', reject);
         });
         // Convert to WAV 16kHz mono
-        await execFileAsync('ffmpeg', ['-y', '-i', oggPath, '-ar', '16000', '-ac', '1', wavPath]);
+        await execFileAsync('ffmpeg', [
+          '-y',
+          '-i',
+          oggPath,
+          '-ar',
+          '16000',
+          '-ac',
+          '1',
+          wavPath,
+        ]);
         // Transcribe with whisper-cli
-        const whisperBin = path.join(os.homedir(), 'whisper.cpp/build/bin/whisper-cli');
-        const model = path.join(os.homedir(), 'whisper.cpp/models/ggml-small.bin');
-        const { stdout } = await execFileAsync(whisperBin, ['-m', model, '-l', 'pt', '-f', wavPath, '--no-timestamps']);
-        const transcribed = stdout.trim().replace(/^\[.*?\]\s*/gm, '').trim();
+        const whisperBin = path.join(
+          os.homedir(),
+          'whisper.cpp/build/bin/whisper-cli',
+        );
+        const model = path.join(
+          os.homedir(),
+          'whisper.cpp/models/ggml-small.bin',
+        );
+        const { stdout } = await execFileAsync(whisperBin, [
+          '-m',
+          model,
+          '-l',
+          'pt',
+          '-f',
+          wavPath,
+          '--no-timestamps',
+        ]);
+        const transcribed = stdout
+          .trim()
+          .replace(/^\[.*?\]\s*/gm, '')
+          .trim();
         fs.unlink(oggPath, () => {});
         fs.unlink(wavPath, () => {});
-        storeNonText(ctx, transcribed ? `[Voz]: ${transcribed}` : '[Voice message]');
+        storeNonText(
+          ctx,
+          transcribed ? `[Voz]: ${transcribed}` : '[Voice message]',
+        );
       } catch (err) {
         logger.warn({ err }, 'Voice transcription failed');
         storeNonText(ctx, '[Voice message]');

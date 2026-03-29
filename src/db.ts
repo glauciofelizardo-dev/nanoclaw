@@ -682,7 +682,9 @@ export function getUsageSummary(days: number = 7): {
   cache_write_tokens: number;
 } {
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-  const row = db.prepare(`
+  const row = db
+    .prepare(
+      `
     SELECT
       COUNT(*) as invocations,
       SUM(input_tokens) as input_tokens,
@@ -690,7 +692,9 @@ export function getUsageSummary(days: number = 7): {
       SUM(cache_read_tokens) as cache_read_tokens,
       SUM(cache_write_tokens) as cache_write_tokens
     FROM agent_usage WHERE recorded_at >= ?
-  `).get(since) as {
+  `,
+    )
+    .get(since) as {
     invocations: number;
     input_tokens: number;
     output_tokens: number;
@@ -716,7 +720,9 @@ export function getDailyUsage(days: number = 30): Array<{
   cache_write_tokens: number;
 }> {
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     SELECT
       substr(recorded_at, 1, 10) as date,
       COUNT(*) as invocations,
@@ -727,7 +733,9 @@ export function getDailyUsage(days: number = 30): Array<{
     FROM agent_usage WHERE recorded_at >= ?
     GROUP BY substr(recorded_at, 1, 10)
     ORDER BY date DESC
-  `).all(since) as Array<{
+  `,
+    )
+    .all(since) as Array<{
     date: string;
     invocations: number;
     input_tokens: number;

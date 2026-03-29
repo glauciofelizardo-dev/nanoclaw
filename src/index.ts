@@ -60,7 +60,11 @@ import {
   loadSenderAllowlist,
   shouldDropMessage,
 } from './sender-allowlist.js';
-import { extractSessionCommand, handleSessionCommand, isSessionCommandAllowed } from './session-commands.js';
+import {
+  extractSessionCommand,
+  handleSessionCommand,
+  isSessionCommandAllowed,
+} from './session-commands.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
@@ -68,27 +72,78 @@ import { logger } from './logger.js';
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
 
-const HAIKU_PRICING = { input: 0.80, output: 4.00, cacheRead: 0.08, cacheWrite: 1.00 };
-const SONNET_PRICING = { input: 3.00, output: 15.00, cacheRead: 0.30, cacheWrite: 3.75 };
+const HAIKU_PRICING = {
+  input: 0.8,
+  output: 4.0,
+  cacheRead: 0.08,
+  cacheWrite: 1.0,
+};
+const SONNET_PRICING = {
+  input: 3.0,
+  output: 15.0,
+  cacheRead: 0.3,
+  cacheWrite: 3.75,
+};
 
-function calcCost(tokens: { input: number; output: number; cacheRead: number; cacheWrite: number }, pricing: typeof HAIKU_PRICING): number {
-  return (tokens.input * pricing.input + tokens.output * pricing.output + tokens.cacheRead * pricing.cacheRead + tokens.cacheWrite * pricing.cacheWrite) / 1_000_000;
+function calcCost(
+  tokens: {
+    input: number;
+    output: number;
+    cacheRead: number;
+    cacheWrite: number;
+  },
+  pricing: typeof HAIKU_PRICING,
+): number {
+  return (
+    (tokens.input * pricing.input +
+      tokens.output * pricing.output +
+      tokens.cacheRead * pricing.cacheRead +
+      tokens.cacheWrite * pricing.cacheWrite) /
+    1_000_000
+  );
 }
 
 function writeUsageSnapshot(): void {
   try {
     const summary7 = getUsageSummary(7);
     const summary30 = getUsageSummary(30);
-    const tokens7 = { input: summary7.input_tokens, output: summary7.output_tokens, cacheRead: summary7.cache_read_tokens, cacheWrite: summary7.cache_write_tokens };
-    const tokens30 = { input: summary30.input_tokens, output: summary30.output_tokens, cacheRead: summary30.cache_read_tokens, cacheWrite: summary30.cache_write_tokens };
-    const daily = getDailyUsage(30).map(d => {
-      const t = { input: d.input_tokens, output: d.output_tokens, cacheRead: d.cache_read_tokens, cacheWrite: d.cache_write_tokens };
-      return { ...d, cost_haiku_usd: calcCost(t, HAIKU_PRICING), cost_sonnet_usd: calcCost(t, SONNET_PRICING) };
+    const tokens7 = {
+      input: summary7.input_tokens,
+      output: summary7.output_tokens,
+      cacheRead: summary7.cache_read_tokens,
+      cacheWrite: summary7.cache_write_tokens,
+    };
+    const tokens30 = {
+      input: summary30.input_tokens,
+      output: summary30.output_tokens,
+      cacheRead: summary30.cache_read_tokens,
+      cacheWrite: summary30.cache_write_tokens,
+    };
+    const daily = getDailyUsage(30).map((d) => {
+      const t = {
+        input: d.input_tokens,
+        output: d.output_tokens,
+        cacheRead: d.cache_read_tokens,
+        cacheWrite: d.cache_write_tokens,
+      };
+      return {
+        ...d,
+        cost_haiku_usd: calcCost(t, HAIKU_PRICING),
+        cost_sonnet_usd: calcCost(t, SONNET_PRICING),
+      };
     });
     const snapshot = {
       updated_at: new Date().toISOString(),
-      last_7_days: { ...summary7, cost_haiku_usd: calcCost(tokens7, HAIKU_PRICING), cost_sonnet_usd: calcCost(tokens7, SONNET_PRICING) },
-      last_30_days: { ...summary30, cost_haiku_usd: calcCost(tokens30, HAIKU_PRICING), cost_sonnet_usd: calcCost(tokens30, SONNET_PRICING) },
+      last_7_days: {
+        ...summary7,
+        cost_haiku_usd: calcCost(tokens7, HAIKU_PRICING),
+        cost_sonnet_usd: calcCost(tokens7, SONNET_PRICING),
+      },
+      last_30_days: {
+        ...summary30,
+        cost_haiku_usd: calcCost(tokens30, HAIKU_PRICING),
+        cost_sonnet_usd: calcCost(tokens30, SONNET_PRICING),
+      },
       daily,
     };
     const snapshotPath = path.join(process.cwd(), 'data', 'usage_stats.json');
@@ -213,18 +268,26 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     timezone: TIMEZONE,
     deps: {
       sendMessage: (text) => channel.sendMessage(chatJid, text),
-      setTyping: (typing) => channel.setTyping?.(chatJid, typing) ?? Promise.resolve(),
-      runAgent: (prompt, onOutput) => runAgent(group, prompt, chatJid, onOutput),
+      setTyping: (typing) =>
+        channel.setTyping?.(chatJid, typing) ?? Promise.resolve(),
+      runAgent: (prompt, onOutput) =>
+        runAgent(group, prompt, chatJid, onOutput),
       closeStdin: () => queue.closeStdin(chatJid),
-      advanceCursor: (ts) => { lastAgentTimestamp[chatJid] = ts; saveState(); },
+      advanceCursor: (ts) => {
+        lastAgentTimestamp[chatJid] = ts;
+        saveState();
+      },
       formatMessages,
       canSenderInteract: (msg) => {
         const hasTrigger = TRIGGER_PATTERN.test(msg.content.trim());
         const reqTrigger = !isMainGroup && group.requiresTrigger !== false;
-        return isMainGroup || !reqTrigger || (hasTrigger && (
-          msg.is_from_me ||
-          isTriggerAllowed(chatJid, msg.sender, loadSenderAllowlist())
-        ));
+        return (
+          isMainGroup ||
+          !reqTrigger ||
+          (hasTrigger &&
+            (msg.is_from_me ||
+              isTriggerAllowed(chatJid, msg.sender, loadSenderAllowlist())))
+        );
       },
     },
   });
@@ -480,7 +543,12 @@ async function startMessageLoop(): Promise<void> {
             // Only close active container if the sender is authorized — otherwise an
             // untrusted user could kill in-flight work by sending /compact (DoS).
             // closeStdin no-ops internally when no container is active.
-            if (isSessionCommandAllowed(isMainGroup, loopCmdMsg.is_from_me === true)) {
+            if (
+              isSessionCommandAllowed(
+                isMainGroup,
+                loopCmdMsg.is_from_me === true,
+              )
+            ) {
               queue.closeStdin(chatJid);
             }
             // Enqueue so processGroupMessages handles auth + cursor advancement.

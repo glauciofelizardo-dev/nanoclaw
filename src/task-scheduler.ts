@@ -208,7 +208,10 @@ async function runTask(
     const scheduleClose = () => {
       if (closeTimer) return;
       closeTimer = setTimeout(() => {
-        logger.debug({ taskId: task.id }, 'Closing task container after result');
+        logger.debug(
+          { taskId: task.id },
+          'Closing task container after result',
+        );
         deps.queue.closeStdin(task.chat_jid);
       }, TASK_CLOSE_DELAY_MS);
     };

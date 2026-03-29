@@ -63,7 +63,15 @@ export interface ContainerOutput {
   newSessionId?: string;
   error?: string;
   usage?: ContainerUsage;
-  modelUsage?: Record<string, { inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number }>;
+  modelUsage?: Record<
+    string,
+    {
+      inputTokens: number;
+      outputTokens: number;
+      cacheReadInputTokens: number;
+      cacheCreationInputTokens: number;
+    }
+  >;
   /** Marks the session update marker emitted by the agent after each query loop iteration. */
   isSessionUpdate?: boolean;
 }
@@ -421,7 +429,10 @@ export async function runContainerAgent(
                 warmResolved = true;
                 const emitter = new EventEmitter();
                 warmEmitter = emitter;
-                const ipcInputDir = path.join(resolveGroupIpcPath(input.groupFolder), 'input');
+                const ipcInputDir = path.join(
+                  resolveGroupIpcPath(input.groupFolder),
+                  'input',
+                );
                 const warmHandle: WarmHandle = {
                   emitter,
                   close: () => {
@@ -515,7 +526,10 @@ export async function runContainerAgent(
       // Warm container closed after serving tasks — signal the pool and exit.
       // The outer Promise was already resolved at warm-resolution time.
       if (warmResolved) {
-        logger.info({ group: group.name, duration, code }, 'Warm container closed');
+        logger.info(
+          { group: group.name, duration, code },
+          'Warm container closed',
+        );
         warmEmitter!.emit('close');
         return;
       }
@@ -591,11 +605,7 @@ export async function runContainerAgent(
         // Full input is only included at verbose level to avoid
         // persisting user conversation content on every non-zero exit.
         if (isVerbose) {
-          logLines.push(
-            `=== Input ===`,
-            JSON.stringify(input, null, 2),
-            ``,
-          );
+          logLines.push(`=== Input ===`, JSON.stringify(input, null, 2), ``);
         } else {
           logLines.push(
             `=== Input Summary ===`,

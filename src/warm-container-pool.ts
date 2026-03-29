@@ -45,7 +45,10 @@ class WarmContainerPool {
       if (this.pool.get(groupFolder)?.handle === handle) {
         clearTimeout(entry.idleTimer);
         this.pool.delete(groupFolder);
-        logger.info({ groupFolder }, '[warm-pool] Container closed, evicted from pool');
+        logger.info(
+          { groupFolder },
+          '[warm-pool] Container closed, evicted from pool',
+        );
       }
     });
 
@@ -69,7 +72,10 @@ class WarmContainerPool {
       const filename = `${Date.now()}-warm-task.json`;
       const filepath = path.join(ipcInputDir, filename);
       const text = `[SCHEDULED TASK - The following message was sent automatically and is not coming directly from the user or group.]\n\n${prompt}`;
-      fs.writeFileSync(`${filepath}.tmp`, JSON.stringify({ type: 'message', text }));
+      fs.writeFileSync(
+        `${filepath}.tmp`,
+        JSON.stringify({ type: 'message', text }),
+      );
       fs.renameSync(`${filepath}.tmp`, filepath);
       logger.info({ groupFolder }, '[warm-pool] Task injected via IPC');
       return true;
@@ -129,7 +135,10 @@ class WarmContainerPool {
 
   private makeIdleTimer(groupFolder: string): ReturnType<typeof setTimeout> {
     return setTimeout(() => {
-      logger.info({ groupFolder }, '[warm-pool] Idle timeout, closing container');
+      logger.info(
+        { groupFolder },
+        '[warm-pool] Idle timeout, closing container',
+      );
       this.pool.get(groupFolder)?.handle.close();
       this.evict(groupFolder);
     }, WARM_IDLE_MS);
