@@ -5,17 +5,57 @@
  *
  * Two auth modes:
  *   API key:  Proxy injects x-api-key on every request.
- *   OAuth:    Container CLI exchanges its placeholder token for a temp
- *             API key via /api/oauth/claude_cli/create_api_key.
- *             Proxy injects real OAuth token on that exchange request;
- *             subsequent requests carry the temp key which is valid as-is.
+ *   OAuth:    Proxy reads the token live from ~/.claude/.credentials.json
+ *             on every request so it automatically picks up refreshed tokens
+ *             without requiring a service restart.
  */
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { createServer, Server } from 'http';
 import { request as httpsRequest } from 'https';
 import { request as httpRequest, RequestOptions } from 'http';
 
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
+
+const CREDENTIALS_PATH = path.join(
+  os.homedir(),
+  '.claude',
+  '.credentials.json',
+);
+// Warn when token has less than 10 minutes remaining
+const WARN_BEFORE_EXPIRY_MS = 10 * 60 * 1000;
+
+let lastExpiryWarnAt = 0;
+
+function readOAuthTokenFromCredentials(): string | undefined {
+  try {
+    const raw = fs.readFileSync(CREDENTIALS_PATH, 'utf8');
+    const creds = JSON.parse(raw);
+    const oauth = creds?.claudeAiOauth;
+    if (!oauth?.accessToken) return undefined;
+
+    const remainingMs = (oauth.expiresAt ?? 0) - Date.now();
+    if (
+      remainingMs < WARN_BEFORE_EXPIRY_MS &&
+      Date.now() - lastExpiryWarnAt > 60_000
+    ) {
+      lastExpiryWarnAt = Date.now();
+      logger.warn(
+        { remainingMinutes: Math.floor(remainingMs / 60_000) },
+        '[credential-proxy] OAuth token expiring soon — refresh may be needed',
+      );
+    }
+    return oauth.accessToken;
+  } catch (err) {
+    logger.error(
+      { err },
+      '[credential-proxy] Failed to read OAuth credentials file',
+    );
+    return undefined;
+  }
+}
 
 export type AuthMode = 'api-key' | 'oauth';
 
@@ -35,8 +75,12 @@ export function startCredentialProxy(
   ]);
 
   const authMode: AuthMode = secrets.ANTHROPIC_API_KEY ? 'api-key' : 'oauth';
-  const oauthToken =
-    secrets.CLAUDE_CODE_OAUTH_TOKEN || secrets.ANTHROPIC_AUTH_TOKEN;
+  // OAuth token is read live per-request from credentials.json so refreshes
+  // are picked up automatically. Explicit env vars act as a manual override.
+  const oauthEnvOverride =
+    secrets.CLAUDE_CODE_OAUTH_TOKEN ||
+    secrets.ANTHROPIC_AUTH_TOKEN ||
+    undefined;
 
   const upstreamUrl = new URL(
     secrets.ANTHROPIC_BASE_URL || 'https://api.anthropic.com',
@@ -72,6 +116,8 @@ export function startCredentialProxy(
           // (exchange request + auth probes). Post-exchange requests use
           // x-api-key only, so they pass through without token injection.
           if (headers['authorization']) {
+            const oauthToken =
+              oauthEnvOverride ?? readOAuthTokenFromCredentials();
             delete headers['authorization'];
             if (oauthToken) {
               headers['authorization'] = `Bearer ${oauthToken}`;

@@ -205,6 +205,33 @@ Run `npx tsx setup/index.ts --step verify` and parse the status block.
 
 Tell user to test: send a message in their registered chat. Show: `tail -f logs/nanoclaw.log`
 
+## 9. Optional: Backup & Token Auto-Refresh
+
+### Backup
+
+Tell the user that `scripts/backup.sh` creates a dated `.tar.gz` of `data/`, `store/`, `groups/`, `.env`, `.mcp.json`, and `.claude/`. The destination can be configured in `.env`:
+
+```env
+BACKUP_DIR=/mnt/c/Users/YourName/Documents/Backups/nanoclaw
+BACKUP_KEEP_DAYS=14
+```
+
+Default is `~/nanoclaw-backups`. To schedule daily backups, add a cron job:
+
+```bash
+(crontab -l 2>/dev/null; echo "0 3 * * * cd $(pwd) && bash scripts/backup.sh >> logs/backup.log 2>&1") | crontab -
+```
+
+### Token Auto-Refresh (OAuth subscribers only)
+
+If they use `CLAUDE_CODE_OAUTH_TOKEN`, the token expires every ~2 hours. `scripts/refresh-token.sh` renews it automatically (skips if >30 min remaining). Schedule it:
+
+```bash
+(crontab -l 2>/dev/null; echo "*/30 * * * * cd $(pwd) && bash scripts/refresh-token.sh >> logs/refresh-token.log 2>&1") | crontab -
+```
+
+Ask `AskUserQuestion`: Would you like me to set up backup and/or token auto-refresh cron jobs now?
+
 ## Troubleshooting
 
 **Service not starting:** Check `logs/nanoclaw.error.log`. Common: wrong Node path (re-run step 7), missing `.env` (step 4), missing channel credentials (re-invoke channel skill).

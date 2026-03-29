@@ -42,6 +42,7 @@ import {
   setRegisteredGroup,
   setRouterState,
   setSession,
+  deleteSession,
   storeChatMetadata,
   storeMessage,
 } from './db.js';
@@ -429,7 +430,11 @@ async function runAgent(
   // Wrap onOutput to track session ID from streamed results and log usage
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
-        if (output.newSessionId) {
+        if (
+          output.newSessionId &&
+          output.status !== 'error' &&
+          output.result !== null
+        ) {
           sessions[group.folder] = output.newSessionId;
           setSession(group.folder, output.newSessionId);
         }
@@ -465,12 +470,21 @@ async function runAgent(
       wrappedOnOutput,
     );
 
-    if (output.newSessionId) {
+    if (output.newSessionId && output.status !== 'error') {
       sessions[group.folder] = output.newSessionId;
       setSession(group.folder, output.newSessionId);
     }
 
     if (output.status === 'error') {
+      // Auto-recover from stale session: clear and let next attempt start fresh
+      if (output.error?.includes('No conversation found with session ID')) {
+        logger.warn(
+          { group: group.name, sessionId },
+          'Stale session detected — clearing for fresh start',
+        );
+        delete sessions[group.folder];
+        deleteSession(group.folder);
+      }
       logger.error(
         { group: group.name, error: output.error },
         'Container agent error',

@@ -1,13 +1,19 @@
 #!/bin/bash
 # NanoClaw Backup Script
-# Salva dados importantes em /mnt/c/Users/Glaucio/Documents/Backups/nanoclaw
+# Configure BACKUP_DIR in .env or set default below
 
 set -euo pipefail
 
-BACKUP_DIR="/mnt/c/Users/Glaucio/Documents/Backups/nanoclaw"
-NANOCLAW_DIR="/home/glaucio/nanoclaw"
-GMAIL_MCP_DIR="/home/glaucio/.gmail-mcp"
-KEEP_DAYS=14
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NANOCLAW_DIR="$(dirname "$SCRIPT_DIR")"
+
+# Load .env if present
+[ -f "$NANOCLAW_DIR/.env" ] && set -a && source "$NANOCLAW_DIR/.env" && set +a
+
+# BACKUP_DIR can be set in .env — fallback to ~/nanoclaw-backups
+BACKUP_DIR="${BACKUP_DIR:-$HOME/nanoclaw-backups}"
+GMAIL_MCP_DIR="${GMAIL_MCP_DIR:-$HOME/.gmail-mcp}"
+KEEP_DAYS="${BACKUP_KEEP_DAYS:-14}"
 
 DATE=$(date +%Y-%m-%d_%H-%M-%S)
 BACKUP_FILE="$BACKUP_DIR/nanoclaw-$DATE.tar.gz"
@@ -22,7 +28,7 @@ mkdir -p "$BACKUP_DIR"
 mkdir -p "$TEMP_DIR/nanoclaw"
 
 # Dados e configuração
-cp -r "$NANOCLAW_DIR/data"          "$TEMP_DIR/nanoclaw/"
+cp -r "$NANOCLAW_DIR/data"         "$TEMP_DIR/nanoclaw/"
 cp -r "$NANOCLAW_DIR/store"         "$TEMP_DIR/nanoclaw/"
 cp -r "$NANOCLAW_DIR/groups"        "$TEMP_DIR/nanoclaw/"
 cp    "$NANOCLAW_DIR/.env"          "$TEMP_DIR/nanoclaw/"
