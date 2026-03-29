@@ -3,6 +3,7 @@
  * Spawns agent execution in containers and handles IPC
  */
 import { ChildProcess, exec, spawn } from 'child_process';
+import { EventEmitter } from 'events';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -27,6 +28,7 @@ import {
   stopContainer,
 } from './container-runtime.js';
 import { detectAuthMode } from './credential-proxy.js';
+import { readEnvFile } from './env.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
 
@@ -42,6 +44,17 @@ export interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  /** Keep container alive after first task completes (for cron tasks). */
+  keepWarm?: boolean;
+  /** Called once when the container is ready to serve as a warm container. */
+  onWarmReady?: (handle: WarmHandle) => void;
+}
+
+export interface ContainerUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_input_tokens: number;
+  cache_creation_input_tokens: number;
 }
 
 export interface ContainerOutput {
@@ -49,6 +62,16 @@ export interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+  usage?: ContainerUsage;
+  modelUsage?: Record<string, { inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number }>;
+  /** Marks the session update marker emitted by the agent after each query loop iteration. */
+  isSessionUpdate?: boolean;
+}
+
+/** Handle to a warm (persistent) container, provided via ContainerInput.onWarmReady. */
+export interface WarmHandle {
+  emitter: EventEmitter; // emits 'output' (ContainerOutput) and 'close'
+  close: () => void;
 }
 
 interface VolumeMount {
@@ -250,6 +273,12 @@ function buildContainerArgs(
     args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
   }
 
+  // Pass model override if configured
+  const { CLAUDE_MODEL } = readEnvFile(['CLAUDE_MODEL']);
+  if (CLAUDE_MODEL) {
+    args.push('-e', `CLAUDE_MODEL=${CLAUDE_MODEL}`);
+  }
+
   // Runtime-specific args for host gateway resolution
   args.push(...hostGatewayArgs());
 
@@ -337,6 +366,8 @@ export async function runContainerAgent(
     let parseBuffer = '';
     let newSessionId: string | undefined;
     let outputChain = Promise.resolve();
+    let warmResolved = false;
+    let warmEmitter: EventEmitter | null = null;
 
     container.stdout.on('data', (data) => {
       const chunk = data.toString();
@@ -377,9 +408,37 @@ export async function runContainerAgent(
             hadStreamingOutput = true;
             // Activity detected — reset the hard timeout
             resetTimeout();
-            // Call onOutput for all markers (including null results)
-            // so idle timers start even for "silent" query completions.
-            outputChain = outputChain.then(() => onOutput(parsed));
+
+            if (input.keepWarm && warmResolved) {
+              // After warm resolution: route all outputs to the warm emitter
+              warmEmitter!.emit('output', parsed);
+            } else {
+              // Normal path: call onOutput
+              outputChain = outputChain.then(() => onOutput(parsed));
+
+              // Warm resolution: trigger on the session update marker
+              if (input.keepWarm && !warmResolved && parsed.isSessionUpdate) {
+                warmResolved = true;
+                const emitter = new EventEmitter();
+                warmEmitter = emitter;
+                const ipcInputDir = path.join(resolveGroupIpcPath(input.groupFolder), 'input');
+                const warmHandle: WarmHandle = {
+                  emitter,
+                  close: () => {
+                    try {
+                      fs.mkdirSync(ipcInputDir, { recursive: true });
+                      fs.writeFileSync(path.join(ipcInputDir, '_close'), '');
+                    } catch {
+                      container.kill('SIGTERM');
+                    }
+                  },
+                };
+                input.onWarmReady?.(warmHandle);
+                outputChain.then(() =>
+                  resolve({ status: 'success', result: null, newSessionId }),
+                );
+              }
+            }
           } catch (err) {
             logger.warn(
               { group: group.name, error: err },
@@ -452,6 +511,14 @@ export async function runContainerAgent(
     container.on('close', (code) => {
       clearTimeout(timeout);
       const duration = Date.now() - startTime;
+
+      // Warm container closed after serving tasks — signal the pool and exit.
+      // The outer Promise was already resolved at warm-resolution time.
+      if (warmResolved) {
+        logger.info({ group: group.name, duration, code }, 'Warm container closed');
+        warmEmitter!.emit('close');
+        return;
+      }
 
       if (timedOut) {
         const ts = new Date().toISOString().replace(/[:.]/g, '-');

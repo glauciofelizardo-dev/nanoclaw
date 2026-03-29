@@ -35,7 +35,10 @@ import {
   getNewMessages,
   getRegisteredGroup,
   getRouterState,
+  getDailyUsage,
+  getUsageSummary,
   initDatabase,
+  logUsage,
   setRegisteredGroup,
   setRouterState,
   setSession,
@@ -64,6 +67,37 @@ import { logger } from './logger.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
+
+const HAIKU_PRICING = { input: 0.80, output: 4.00, cacheRead: 0.08, cacheWrite: 1.00 };
+const SONNET_PRICING = { input: 3.00, output: 15.00, cacheRead: 0.30, cacheWrite: 3.75 };
+
+function calcCost(tokens: { input: number; output: number; cacheRead: number; cacheWrite: number }, pricing: typeof HAIKU_PRICING): number {
+  return (tokens.input * pricing.input + tokens.output * pricing.output + tokens.cacheRead * pricing.cacheRead + tokens.cacheWrite * pricing.cacheWrite) / 1_000_000;
+}
+
+function writeUsageSnapshot(): void {
+  try {
+    const summary7 = getUsageSummary(7);
+    const summary30 = getUsageSummary(30);
+    const tokens7 = { input: summary7.input_tokens, output: summary7.output_tokens, cacheRead: summary7.cache_read_tokens, cacheWrite: summary7.cache_write_tokens };
+    const tokens30 = { input: summary30.input_tokens, output: summary30.output_tokens, cacheRead: summary30.cache_read_tokens, cacheWrite: summary30.cache_write_tokens };
+    const daily = getDailyUsage(30).map(d => {
+      const t = { input: d.input_tokens, output: d.output_tokens, cacheRead: d.cache_read_tokens, cacheWrite: d.cache_write_tokens };
+      return { ...d, cost_haiku_usd: calcCost(t, HAIKU_PRICING), cost_sonnet_usd: calcCost(t, SONNET_PRICING) };
+    });
+    const snapshot = {
+      updated_at: new Date().toISOString(),
+      last_7_days: { ...summary7, cost_haiku_usd: calcCost(tokens7, HAIKU_PRICING), cost_sonnet_usd: calcCost(tokens7, SONNET_PRICING) },
+      last_30_days: { ...summary30, cost_haiku_usd: calcCost(tokens30, HAIKU_PRICING), cost_sonnet_usd: calcCost(tokens30, SONNET_PRICING) },
+      daily,
+    };
+    const snapshotPath = path.join(process.cwd(), 'data', 'usage_stats.json');
+    fs.mkdirSync(path.dirname(snapshotPath), { recursive: true });
+    fs.writeFileSync(snapshotPath, JSON.stringify(snapshot, null, 2));
+  } catch (err) {
+    logger.warn({ err }, 'Failed to write usage snapshot');
+  }
+}
 
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
@@ -329,12 +363,24 @@ async function runAgent(
     new Set(Object.keys(registeredGroups)),
   );
 
-  // Wrap onOutput to track session ID from streamed results
+  // Wrap onOutput to track session ID from streamed results and log usage
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
         if (output.newSessionId) {
           sessions[group.folder] = output.newSessionId;
           setSession(group.folder, output.newSessionId);
+        }
+        if (output.usage) {
+          logUsage({
+            groupFolder: group.folder,
+            chatJid,
+            inputTokens: output.usage.input_tokens,
+            outputTokens: output.usage.output_tokens,
+            cacheReadTokens: output.usage.cache_read_input_tokens,
+            cacheWriteTokens: output.usage.cache_creation_input_tokens,
+            modelUsage: output.modelUsage,
+          });
+          writeUsageSnapshot();
         }
         await onOutput(output);
       }

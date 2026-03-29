@@ -34,6 +34,14 @@ interface ContainerOutput {
   result: string | null;
   newSessionId?: string;
   error?: string;
+  usage?: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_input_tokens: number;
+    cache_creation_input_tokens: number;
+  };
+  modelUsage?: Record<string, { inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number }>;
+  isSessionUpdate?: boolean;
 }
 
 interface SessionEntry {
@@ -393,6 +401,7 @@ async function runQuery(
     prompt: stream,
     options: {
       cwd: '/workspace/group',
+      extraArgs: process.env.CLAUDE_MODEL ? { model: process.env.CLAUDE_MODEL } : undefined,
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
@@ -460,11 +469,21 @@ async function runQuery(
     if (message.type === 'result') {
       resultCount++;
       const textResult = 'result' in message ? (message as { result?: string }).result : null;
-      log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
+      const msgAny = message as unknown as { usage?: { input_tokens: number; output_tokens: number; cache_read_input_tokens: number; cache_creation_input_tokens: number }; modelUsage?: Record<string, { inputTokens: number; outputTokens: number; cacheReadInputTokens: number; cacheCreationInputTokens: number }> };
+      const usage = msgAny.usage;
+      const modelUsage = msgAny.modelUsage;
+      log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}${usage ? ` tokens=in:${usage.input_tokens}+cache_r:${usage.cache_read_input_tokens} out:${usage.output_tokens}` : ''}`);
       writeOutput({
         status: 'success',
         result: textResult || null,
-        newSessionId
+        newSessionId,
+        usage: usage ? {
+          input_tokens: usage.input_tokens || 0,
+          output_tokens: usage.output_tokens || 0,
+          cache_read_input_tokens: usage.cache_read_input_tokens || 0,
+          cache_creation_input_tokens: usage.cache_creation_input_tokens || 0,
+        } : undefined,
+        modelUsage,
       });
     }
   }
@@ -638,7 +657,7 @@ async function main(): Promise<void> {
       }
 
       // Emit session update so host can track it
-      writeOutput({ status: 'success', result: null, newSessionId: sessionId });
+      writeOutput({ status: 'success', result: null, newSessionId: sessionId, isSessionUpdate: true });
 
       log('Query ended, waiting for next IPC message...');
 

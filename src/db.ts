@@ -69,6 +69,19 @@ function createSchema(database: Database.Database): void {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS agent_usage (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_folder TEXT NOT NULL,
+      chat_jid TEXT NOT NULL,
+      recorded_at TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+      model_usage TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_usage_recorded_at ON agent_usage(recorded_at);
+    CREATE INDEX IF NOT EXISTS idx_agent_usage_group ON agent_usage(group_folder, recorded_at);
     CREATE TABLE IF NOT EXISTS sessions (
       group_folder TEXT PRIMARY KEY,
       session_id TEXT NOT NULL
@@ -632,6 +645,96 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     };
   }
   return result;
+}
+
+// --- Usage tracking ---
+
+export function logUsage(entry: {
+  groupFolder: string;
+  chatJid: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  modelUsage?: Record<string, unknown>;
+}): void {
+  db.prepare(
+    `INSERT INTO agent_usage (group_folder, chat_jid, recorded_at, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, model_usage)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    entry.groupFolder,
+    entry.chatJid,
+    new Date().toISOString(),
+    entry.inputTokens,
+    entry.outputTokens,
+    entry.cacheReadTokens,
+    entry.cacheWriteTokens,
+    entry.modelUsage ? JSON.stringify(entry.modelUsage) : null,
+  );
+}
+
+export function getUsageSummary(days: number = 7): {
+  period_days: number;
+  invocations: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+} {
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const row = db.prepare(`
+    SELECT
+      COUNT(*) as invocations,
+      SUM(input_tokens) as input_tokens,
+      SUM(output_tokens) as output_tokens,
+      SUM(cache_read_tokens) as cache_read_tokens,
+      SUM(cache_write_tokens) as cache_write_tokens
+    FROM agent_usage WHERE recorded_at >= ?
+  `).get(since) as {
+    invocations: number;
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens: number;
+    cache_write_tokens: number;
+  };
+  return {
+    period_days: days,
+    invocations: row.invocations || 0,
+    input_tokens: row.input_tokens || 0,
+    output_tokens: row.output_tokens || 0,
+    cache_read_tokens: row.cache_read_tokens || 0,
+    cache_write_tokens: row.cache_write_tokens || 0,
+  };
+}
+
+export function getDailyUsage(days: number = 30): Array<{
+  date: string;
+  invocations: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+}> {
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  return db.prepare(`
+    SELECT
+      substr(recorded_at, 1, 10) as date,
+      COUNT(*) as invocations,
+      SUM(input_tokens) as input_tokens,
+      SUM(output_tokens) as output_tokens,
+      SUM(cache_read_tokens) as cache_read_tokens,
+      SUM(cache_write_tokens) as cache_write_tokens
+    FROM agent_usage WHERE recorded_at >= ?
+    GROUP BY substr(recorded_at, 1, 10)
+    ORDER BY date DESC
+  `).all(since) as Array<{
+    date: string;
+    invocations: number;
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens: number;
+    cache_write_tokens: number;
+  }>;
 }
 
 // --- JSON migration ---
